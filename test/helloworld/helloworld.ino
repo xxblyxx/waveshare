@@ -2,14 +2,9 @@
 
 #include "FreeMono8pt7b.h"
 #include "FreeSans8pt7b.h"
-//#include "FreeSansBold10pt7b.h"
-//#include "FreeSerifBoldItalic12pt7b.h"
-//#include <U8g2_for_Adafruit_GFX.h>
-//#include <Adafruit_TFTLCD.h>
-//#include <Fonts/FreeMonoBoldOblique12pt7b.h>
 
 #define GFX_DEV_DEVICE WAVESHARE_ESP32_S3_TFT_4_3
-#define _BackgroundColor 0x003030
+#define _BackgroundColor 0x003030 //blue
 #define _FontColor WHITE
 //define GFX_BL 2
 
@@ -126,5 +121,5 @@ void setup()
 void loop()
 {
   printText(100,100);
-  //animate(500);
+  animate(500);
 }
