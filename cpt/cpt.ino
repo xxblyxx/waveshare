@@ -11,8 +11,10 @@
 //define GFX_BL 2
 
 /*TODO
+- figure out how to clear the screen to move to next mode and prevent screen flashing because we are clearing the entire display each time and it's in a loop
 - when found, display CPT Found, initializing.
 - work on state when found back to scanning
+
 */
 
 Arduino_ESP32RGBPanel* rgbpanel = new Arduino_ESP32RGBPanel(
@@ -165,8 +167,7 @@ bool LEDred = false;
 //cpt vars END
 
 //my vars START
-int displayScanCPTCounter = 0;
-int displayTempCounter = 0;
+int CurrentScreenDisplayState = 0; //1=starting up, 2 = scan, 3 = instant, 4 = predict
 //my vars END
 
 bool GFXinit() {
@@ -241,13 +242,25 @@ void GFXflush() {
 }
 
 void DisplayFrame(int color) {
-  gfx->fillRoundRect(1, 1, 800, 480, 10, color);
-  gfx->fillRoundRect(10, 10, 780, 460, 10, _BackgroundColor);
+  int reduction = 1;
+  for (int i = 1; i <= 5; i++) { //thickness
+    gfx->drawRoundRect(i, i, 800-reduction, 480-reduction, 10, color);
+    reduction = reduction+2;
+  }
+
+  // gfx->drawRoundRect(1, 1, 799, 479, 10, color); //800-1
+  // gfx->drawRoundRect(2, 2, 797, 477, 10, color); //800-3
+  // gfx->drawRoundRect(3, 3, 795, 475, 10, color); //800-5
+  // gfx->drawRoundRect(4, 4, 796, 476, 10, color);
+  // gfx->drawRoundRect(5, 5, 795, 475, 10, color);
+
+  // gfx->fillRoundRect(1, 1, 800, 480, 10, color);
+  // gfx->fillRoundRect(10, 10, 780, 460, 10, _BackgroundColor);
 }
 
-void ClearDisplay() {
-  gfx->fillRoundRect(10, 10, 780, 460, 10, _BackgroundColor);
-}
+// void ClearDisplay() {
+//   gfx->fillRoundRect(10, 10, 780, 460, 10, _BackgroundColor);
+// }
 
 void FlashFrame(int color, int waitTime, int numberOfFlash) {
   for (int i = 0; i <= numberOfFlash; i++) {
@@ -256,10 +269,17 @@ void FlashFrame(int color, int waitTime, int numberOfFlash) {
   }
 }
 
+void ClearDisplay(int state) {
+  if (CurrentScreenDisplayState != state){
+    gfx->fillScreen(_BackgroundColor);
+    CurrentScreenDisplayState = state;
+  }
+}
+
+
 void displayTemps() {
-  if (displayTempCounter == 0)
-    DisplayFrame(GREEN);
-  displayTempCounter++;
+  ClearDisplay(3);
+  DisplayFrame(GREEN);
   displayProbeMode();
   displayInstantTemp();
   if (!CPTmode)  //CPTMode-1=instant, 0 = predict
@@ -404,8 +424,6 @@ void readCPTvalue(BLECharacteristic characteristic) {
 
   if (true) {
     displayTemps();
-    //reset displayScanCPTCounter so we can redraw the whole frame if we got connection, then lost it and start scanning again
-    displayScanCPTCounter = 0;
     
     //showText(1,200,2,"Got Temp :" + String(InstantReadTemp), false);
 
@@ -535,6 +553,7 @@ void SetupCPT() {
 }
 
 void DisplayStartup() {
+  ClearDisplay(1);
   DisplayFrame(BLUE);
   for (int i = 0; i <= 5; i++) {
     showTextLarge(200, 200, 1, "Starting up...", false);
@@ -548,15 +567,9 @@ void DisplayCombustionLogo(int x, int y, int width, int height, int color){
     gfx->drawBitmap(x,y, CombustionLogoBitmap, width, height, color);
 }
 
-void DisplayScanCPT(bool isDisplayFrame) {
-  //reset displayTempCounter when we got and lost conneection
-  displayTempCounter = 0;
-  
-  if (isDisplayFrame)
-  {
-    gfx->fillScreen(_BackgroundColor);
-    DisplayFrame(YELLOW);
-  }
+void DisplayScanCPT() {
+  ClearDisplay(2);
+  DisplayFrame(YELLOW);
   for (int i = 0; i <= 3; i++) {
     showTextLarge(150, 375, 1, "Scanning for CPT...", false);
     DisplayCombustionLogo(300,100, 200, 200, RED);
@@ -585,8 +598,7 @@ void loop() {
     CPTscanning = true;
   }
   Serial.println("BLE Polling");
-  DisplayScanCPT(displayScanCPTCounter == 0);
-  displayScanCPTCounter++;
+  DisplayScanCPT();
   BLE.poll();
   delay(100);
 }
