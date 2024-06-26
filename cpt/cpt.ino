@@ -2,12 +2,18 @@
 #include <Arduino_GFX_Library.h>
 
 #include "FreeMono8pt7b.h"
-#include "FreeSans8pt7b.h"
+#include "FreeMono24pt7b.h"
+#include "combustionLogo.h"
 
 #define GFX_DEV_DEVICE WAVESHARE_ESP32_S3_TFT_4_3
-#define _BackgroundColor 0x003030 //blue
+#define _BackgroundColor BLACK  //blue
 #define _FontColor WHITE
 //define GFX_BL 2
+
+/*TODO
+- when found, display CPT Found, initializing.
+- work on state when found back to scanning
+*/
 
 Arduino_ESP32RGBPanel* rgbpanel = new Arduino_ESP32RGBPanel(
   5 /* DE */,
@@ -158,6 +164,11 @@ bool TFTbl = false;
 bool LEDred = false;
 //cpt vars END
 
+//my vars START
+int displayScanCPTCounter = 0;
+int displayTempCounter = 0;
+//my vars END
+
 bool GFXinit() {
   Serial.println("GFX init...");
 
@@ -166,11 +177,11 @@ bool GFXinit() {
     return false;
   }
   //set font
-  gfx->setFont(&FreeSans8pt7b);
+  gfx->setFont(&FreeMono8pt7b);
   //.setFont(&FreeMonoBoldOblique12pt7b);
 
   gfx->fillScreen(_BackgroundColor);
-  //BLset(HIGH); //does not work
+  //BLset(HIGH); //does not work TODO research
 
   // gfx->setTextColor(WHITE);
   // gfx->setTextSize(4);
@@ -180,36 +191,21 @@ bool GFXinit() {
   return true;
 }
 
-void animate(int wait){
-  int x = random(1,700);
-  int y = random(1,350);
-  showText(x,y,1,"Hello World",false);
+void animate(int wait) {
+  int x = random(1, 700);
+  int y = random(1, 350);
+  showText(x, y, 1, "Hello World", false);
   delay(wait);
-  showText(x,y,1,"Hello World",true);
+  showText(x, y, 1, "Hello World", true);
 }
 
-void printText(int16_t x1, int16_t y1)
-{
-  gfx->setTextColor(_FontColor);
-  gfx->setTextSize(2);
-  gfx->setCursor(x1, y1);
-  gfx->println("Hello world");
+float convertCToF(float celcius) {
+  return ((celcius * 9 / 5) + 32);
 }
 
-void clearText(int16_t x1, int16_t y1)
-{
-  gfx->setTextColor(_BackgroundColor);
-  gfx->setTextSize(2);
-  gfx->setCursor(x1, y1);
-  gfx->println("Hello world");
-}
-
-float convertCToF(float celcius){
-  return ((celcius * 9/5) + 32);
-}
-
-void showText(int x, int y, int size, String msg, bool clear){
- if(clear)
+void showText(int x, int y, int size, String msg, bool clear) {
+  gfx->setFont(&FreeMono8pt7b);
+  if (clear)
     gfx->setTextColor(_BackgroundColor);
   else
     gfx->setTextColor(_FontColor);
@@ -218,11 +214,22 @@ void showText(int x, int y, int size, String msg, bool clear){
   gfx->println(msg);
 }
 
-void blinkAsterisks(){
-    showText(700,20,1,"*",false);
-    delay(1000);
-    showText(700,20,1,"*",true);
-    delay(500);
+void showTextLarge(int x, int y, int size, String msg, bool clear) {
+  gfx->setFont(&FreeMono24pt7b);
+  if (clear)
+    gfx->setTextColor(_BackgroundColor);
+  else
+    gfx->setTextColor(_FontColor);
+  gfx->setTextSize(size);
+  gfx->setCursor(x, y);
+  gfx->println(msg);
+}
+
+void blinkAsterisks() {
+  showText(700, 20, 1, "*", false);
+  delay(1000);
+  showText(700, 20, 1, "*", true);
+  delay(500);
 }
 
 void GFXdraw16bitRGBBitmap(int16_t x1, int16_t y1, uint16_t* full, int16_t w, int16_t h) {
@@ -233,48 +240,64 @@ void GFXflush() {
   gfx->flush();
 }
 
-void displayTemps(){
+void DisplayFrame(int color) {
+  gfx->fillRoundRect(1, 1, 800, 480, 10, color);
+  gfx->fillRoundRect(10, 10, 780, 460, 10, _BackgroundColor);
+}
+
+void ClearDisplay() {
+  gfx->fillRoundRect(10, 10, 780, 460, 10, _BackgroundColor);
+}
+
+void FlashFrame(int color, int waitTime, int numberOfFlash) {
+  for (int i = 0; i <= numberOfFlash; i++) {
+    DisplayFrame(color);
+    delay(waitTime);
+  }
+}
+
+void displayTemps() {
+  if (displayTempCounter == 0)
+    DisplayFrame(GREEN);
+  displayTempCounter++;
   displayProbeMode();
   displayInstantTemp();
-  if (!CPTmode) //CPTMode-1=instant, 0 = predict
+  if (!CPTmode)  //CPTMode-1=instant, 0 = predict
   {
     displaySurfaceTemp();
     displayAmbientTemp();
-  }
-  else
-  {
+  } else {
     //clear non-instant temps
-    gfx->fillRect(1, 225, 800, 100, _BackgroundColor);
+    gfx->fillRect(25, 225, 750, 100, _BackgroundColor);
     GFXflush();
   }
 }
 
-void displayProbeMode(){
-  int x = 210;
-  gfx->fillRect(350, x-25, 300, 30, _BackgroundColor);
+void displayProbeMode() {
+  int y = 45;
+  gfx->fillRect(175, y - 1, 300, 30, _BackgroundColor);
   GFXflush();
-  if (CPTmode) //CPTMode-1=instant, 0 = predict
-    showText(350,x,2,"Instant Mode", false);
+  if (CPTmode)  //CPTMode-1=instant, 0 = predict
+    showTextLarge(175, y, 1, "Instant Mode", false);
   else
-    showText(350,x,2,"Predict Mode", false);
-
+    showTextLarge(175, y, 1, "Predict Mode", false);
 }
 
-void displayInstantTemp(){
-  int x = 210;
-  gfx->fillRect(1, x-25, 300, 30, _BackgroundColor);
+void displayInstantTemp() {
+  int y = 210;
+  gfx->fillRect(25, y - 30, 500, 40, _BackgroundColor);
   GFXflush();
-  showText(1,x,2,"Instant :" + String(convertCToF(InstantReadTemp)), false);
+  showTextLarge(25, y, 1, "Instant :" + String(convertCToF(InstantReadTemp)), false);
 }
 
-void displaySurfaceTemp(){
+void displaySurfaceTemp() {
   int x = 250;
-  gfx->fillRect(1, x-25, 300, 30, _BackgroundColor);
+  gfx->fillRect(1, x - 25, 300, 30, _BackgroundColor);
   GFXflush();
-  showText(1,x,2,"Surface S" + String(SurfID) + " :"+ String(convertCToF(SurfaceCurrentTemp)), false);
+  showText(1, x, 2, "Surface S" + String(SurfID) + " :" + String(convertCToF(SurfaceCurrentTemp)), false);
 }
 
-void displayAmbientTemp(){
+void displayAmbientTemp() {
   float ACTfx = AmbientCurrentTemp * 10;
   float ACTfr = round(ACTfx);
   float ACTf = ACTfr / 10;
@@ -288,18 +311,19 @@ void displayAmbientTemp(){
   // canvas.print(ACTi);
 
   int x = 290;
-  gfx->fillRect(1, x-25, 300, 30, _BackgroundColor);
+  gfx->fillRect(1, x - 25, 300, 30, _BackgroundColor);
   GFXflush();
-  showText(1,x,2,"Ambient S" + String(AmbiID) + " :"+ String(convertCToF(AmbientCurrentTemp)), false);
+  showText(1, x, 2, "Ambient S" + String(AmbiID) + " :" + String(convertCToF(AmbientCurrentTemp)), false);
 }
 
 void readCPTvalue(BLECharacteristic characteristic) {
+  Serial.println("in readCPTvalue");
   characteristic.read();
   characteristic.readValue(&probeStatusData, 48);
 
-  showText(1,150,1,"readCPT!!!",false);
+  showText(1, 150, 1, "readCPT!!!", false);
 
-  StatusData *statusData = reinterpret_cast<StatusData *>(probeStatusData);
+  StatusData* statusData = reinterpret_cast<StatusData*>(probeStatusData);
 
   int32_t t1_c = (int32_t)(statusData->packedTemperatures.temperature1 * 5) - 2000;
   CPT_RAY[1] = (float)(t1_c) / 100.0;
@@ -332,6 +356,20 @@ void readCPTvalue(BLECharacteristic characteristic) {
   SurfID = (int32_t)(statusData->packedSensors.surfacesensor + 4);
   AmbiID = (int32_t)(statusData->packedSensors.ambientsensor + 5);
 
+  Serial.println((String)CPTmode + " " + (String)BatStat + " " + (String)CoreID + " " + (String)SurfID + " " + (String)AmbiID);
+  Serial.println("CPT 1 " + (String)CPT_RAY[1]);
+  Serial.println("CPT 2 " + (String)CPT_RAY[2]);
+  Serial.println("CPT 3 " + (String)CPT_RAY[3]);
+  Serial.println("CPT 4 " + (String)CPT_RAY[4]);
+  Serial.println("CPT 5 " + (String)CPT_RAY[5]);
+  Serial.println("CPT 6 " + (String)CPT_RAY[6]);
+  Serial.println("CPT 7 " + (String)CPT_RAY[7]);
+  Serial.println("CPT 8 " + (String)CPT_RAY[8]);
+  //Serial.println("probeStatusData " + (String)probeStatusData);
+  Serial.println("t3_c " + (String)t3_c);
+
+
+
   PredState = (int32_t)(statusData->packedPrediction.predictionstate);
   PredMode = (int32_t)(statusData->packedPrediction.predictionmode);
   PredType = (int32_t)(statusData->packedPrediction.predictiontype);
@@ -359,15 +397,17 @@ void readCPTvalue(BLECharacteristic characteristic) {
 
   CoreCurrentTemp = CPT_RAY[CoreID];
   SurfaceCurrentTemp = CPT_RAY[SurfID];
-  AmbientCurrentTemp = CPT_RAY[AmbiID];//CPT_RAY[AmbiID];
-  InstantReadTemp = CPT_RAY[1]; 
+  AmbientCurrentTemp = CPT_RAY[AmbiID];  //CPT_RAY[AmbiID];
+  InstantReadTemp = CPT_RAY[1];
 
-  showText(1,175,1,"starting to check ",false);
+  showText(1, 175, 1, "starting to check ", false);
 
   if (true) {
     displayTemps();
+    //reset displayScanCPTCounter so we can redraw the whole frame if we got connection, then lost it and start scanning again
+    displayScanCPTCounter = 0;
+    
     //showText(1,200,2,"Got Temp :" + String(InstantReadTemp), false);
-
 
     // canvas.fillScreen(ST77XX_BLACK);
     // if (CPTmode == 1) {
@@ -394,30 +434,30 @@ void readCPTvalue(BLECharacteristic characteristic) {
 }
 
 void CPTdiscoveredHandler(BLEDevice peripheral) {
-  showText(1,450,1,"in CPTdiscoveredHandler", false);
+  showText(1, 450, 1, "in CPTdiscoveredHandler", false);
   BLE.stopScan();
   CPTscanning = false;
-  showText(1,65,1,"Found CPT,Connecting ...", false);
+  showText(1, 65, 1, "Found CPT,Connecting ...", false);
   peripheral.connect();
   delay(2000);
   if (!peripheral.connected()) {
-    showText(1,450,1,"CPT Connection,Failure", false);
+    showTextLarge(1, 450, 1, "CPT Connection,Failure", false);
     while (!CPTconnected) {
       blinkAsterisks();
     }
   }
   CPTconnected = true;
-  showText(1,85,1,"CPT Connected, discovering, service", false);
+  showText(1, 85, 1, "CPT Connected, discovering, service", false);
 
   while (!CPTdiscovered) {
     if (peripheral.discoverService("00000100-caab-3792-3d44-97ae51c1407a")) {
-      showText(1,450,1,"Service Discovered", false);
+      showText(1, 450, 1, "Service Discovered", false);
       CPTdiscovered = true;
     } else {
-      showText(1,450,1,"Update Service Undiscovered", false);
+      showText(1, 450, 1, "Update Service Undiscovered", false);
       peripheral.disconnect();
       delay(250);
-      showText(1,450,1,"Retrying...", false);
+      showText(1, 450, 1, "Retrying...", false);
       peripheral.connect();
       delay(500);
     }
@@ -431,15 +471,15 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
   delay(500);
 
   if (characteristic.canSubscribe()) {
-    showText(1,105,1,"Subscribing...", false);
+    showText(1, 105, 1, "Subscribing...", false);
     while (!CPTsubscribed) {
       if (characteristic.subscribe()) {
-        showText(1,125,1,"SUBSCRIBED", false);
+        showText(1, 125, 1, "SUBSCRIBED", false);
         CPTsubscribed = true;
       } else {
-        showText(1,450,1,"Subscription Failed", false);
+        showText(1, 450, 1, "Subscription Failed", false);
         delay(500);
-        showText(1,450,1,"Retrying Subscription...", false);
+        showText(1, 450, 1, "Retrying Subscription...", false);
         characteristic.subscribe();
         delay(500);
       }
@@ -477,42 +517,76 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
 }
 
 
-void SetupCPT(){
-  showText(1,20,1,"Starting BLE, setupCPT...",false);
+void SetupCPT() {
+  //showText(1,20,1,"Starting BLE, setupCPT...",false);
+  Serial.println("Starting BLE, setupCPT...");
 
   if (!BLE.begin()) {
-    showText(1,450,1,"BLE module failed!", false);
+    showText(1, 450, 1, "BLE module failed!", false);
+    Serial.println("BLE module failed!");
     while (!BLE_UI) {
       blinkAsterisks();
     }
   }
   BLE_UI = true;
-  showText(1,45,1,"BLE Ready", false);
-  Serial.println("calling BLE.setEventHandler");
+  //showText(1,45,1,"BLE Ready", false);
+  Serial.println("BLE Ready, calling BLE.setEventHandler");
   BLE.setEventHandler(BLEDiscovered, CPTdiscoveredHandler);
 }
 
+void DisplayStartup() {
+  DisplayFrame(BLUE);
+  for (int i = 0; i <= 5; i++) {
+    showTextLarge(200, 200, 1, "Starting up...", false);
+    delay(250);
+    showTextLarge(200, 200, 1, "Starting up...", true);
+    delay(450);
+  }
+}
 
-void setup()
-{
-  Serial.begin(9600);
+void DisplayCombustionLogo(int x, int y, int width, int height, int color){
+    gfx->drawBitmap(x,y, CombustionLogoBitmap, width, height, color);
+}
+
+void DisplayScanCPT(bool isDisplayFrame) {
+  //reset displayTempCounter when we got and lost conneection
+  displayTempCounter = 0;
+  
+  if (isDisplayFrame)
+  {
+    gfx->fillScreen(_BackgroundColor);
+    DisplayFrame(YELLOW);
+  }
+  for (int i = 0; i <= 3; i++) {
+    showTextLarge(150, 375, 1, "Scanning for CPT...", false);
+    DisplayCombustionLogo(300,100, 200, 200, RED);
+    delay(250);
+    DisplayCombustionLogo(300,100, 200, 200, ORANGE);
+    //showTextLarge(150, 50, 1, "Scanning for CPT...", true);
+    delay(450);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
   Serial.println("start setup");
   GFXinit();
+  DisplayStartup();
   SetupCPT();
 }
 
-void loop()
-{
+void loop() {
   Serial.println("start loop");
-  showText(1,400,1,"Starting...",false);
-  blinkAsterisks();
+  //blinkAsterisks();
   //cpt stuff
   if (!CPTscanning) {
-    showText(1,450,1,"Scanning for CPT...",false);
     //ENTER YOUR CPT MAC ADDRESS HERE...
-    BLE.scanForAddress("c2:71:17:61:f9:d0");//("a0:b1:c2:d3:e4:f5");
+    BLE.scanForAddress("c2:71:17:61:f9:d0");  //("a0:b1:c2:d3:e4:f5");
     CPTscanning = true;
   }
+  Serial.println("BLE Polling");
+  DisplayScanCPT(displayScanCPTCounter == 0);
+  displayScanCPTCounter++;
   BLE.poll();
   delay(100);
 }
