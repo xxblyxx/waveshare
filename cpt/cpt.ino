@@ -4,6 +4,7 @@
 #include "FreeMono8pt7b.h"
 #include "FreeMono24pt7b.h"
 #include "combustionLogo.h"
+#include "Seven_Segment72pt7b.h"
 
 #define GFX_DEV_DEVICE WAVESHARE_ESP32_S3_TFT_4_3
 #define _BackgroundColor BLACK  //blue
@@ -11,10 +12,15 @@
 //define GFX_BL 2
 
 /*TODO
-- figure out how to clear the screen to move to next mode and prevent screen flashing because we are clearing the entire display each time and it's in a loop
+x figure out how to clear the screen to move to next mode and prevent screen flashing because we are clearing the entire display each time and it's in a loop
 - when found, display CPT Found, initializing.
-- work on state when found back to scanning
-
+- predict simple add support for header color
+- find prettier fonts
+x work on state when found back to scanning
+- fix CPT connection fail
+- work on web server 
+- add progress bar for prediction and eta
+- clean up code
 */
 
 Arduino_ESP32RGBPanel* rgbpanel = new Arduino_ESP32RGBPanel(
@@ -168,6 +174,7 @@ bool LEDred = false;
 
 //my vars START
 int CurrentScreenDisplayState = 0; //1=starting up, 2 = scan, 3 = instant, 4 = predict
+bool IsPredictSimple = true;
 //my vars END
 
 bool GFXinit() {
@@ -226,6 +233,19 @@ void showTextLarge(int x, int y, int size, String msg, bool clear) {
   gfx->println(msg);
 }
 
+void showInstantTemp(String msg, bool clear) {
+  gfx->setFont(&Seven_Segment72pt7b);
+  if (clear)
+    gfx->setTextColor(_BackgroundColor);
+  else
+    gfx->setTextColor(_FontColor);
+  gfx->setTextSize(2);
+  gfx->setCursor(20,350);
+  //debug test temp
+  //msg = "999.99";
+  gfx->println(msg);
+}
+
 void blinkAsterisks() {
   showText(700, 20, 1, "*", false);
   delay(1000);
@@ -276,72 +296,111 @@ void ClearDisplay(int state) {
   }
 }
 
-
 void displayTemps() {
-  ClearDisplay(3);
-  DisplayFrame(GREEN);
-  displayProbeMode();
-  displayInstantTemp();
   if (!CPTmode)  //CPTMode-1=instant, 0 = predict
   {
-    displaySurfaceTemp();
-    displayAmbientTemp();
-  } else {
-    //clear non-instant temps
-    gfx->fillRect(25, 225, 750, 100, _BackgroundColor);
-    GFXflush();
+    ClearDisplay(4);
+    DisplayFrame(ORANGE);
+    displayProbeMode();
+    displayPredictTemps();
+  } 
+  else //instant
+  {
+    ClearDisplay(3);
+    DisplayFrame(GREEN);
+    displayProbeMode();
+    displayInstantTemp();
   }
 }
 
 void displayProbeMode() {
+  int x = 200;
   int y = 45;
-  gfx->fillRect(175, y - 1, 300, 30, _BackgroundColor);
+  gfx->fillRect(x, y - 1, 300, 30, _BackgroundColor);
   GFXflush();
   if (CPTmode)  //CPTMode-1=instant, 0 = predict
-    showTextLarge(175, y, 1, "Instant Mode", false);
+    showTextLarge(x, y, 1, "Instant Mode", false);
   else
-    showTextLarge(175, y, 1, "Predict Mode", false);
+    showTextLarge(x, y, 1, "Predict Mode", false);
 }
 
+String oldInstantTemp;
 void displayInstantTemp() {
-  int y = 210;
-  gfx->fillRect(25, y - 30, 500, 40, _BackgroundColor);
+  // gfx->fillRect(25, 50, 750, 350, _BackgroundColor);
+  // GFXflush();
+  showInstantTemp(oldInstantTemp,true); //clear old temp
+  showInstantTemp(String(convertCToF(InstantReadTemp)),false);
+  oldInstantTemp = String(convertCToF(InstantReadTemp));
+  //showTextLarge(25, y, 1, "Instant :" + String(convertCToF(InstantReadTemp)), false);
+}
+
+void displayPredictSimpleBox(int gridNumber, String hdr, int sensorNumber, String temp){
+  int gridSpace = 0;
+  if (gridNumber > 1)
+    gridSpace = (gridNumber-1) * 260;
+
+  int x = 15 + (gridSpace);
+  int y = 200;
+  //Serial.println(String(gridSpace) + " " + String(x));
+  gfx->fillRect(x, y + 15, 240, 120, _BackgroundColor);//_BackgroundColor);
+  showText(x+50, y, 3, hdr, false);
+  showText(x+80, y+55, 2, "T" + String(sensorNumber), false);
+  showText(x+15, y+120, 4, temp, false);
+}
+
+void displayPredictSimple(){
+  //debug
+//   CoreCurrentTemp = 80.1;
+// SurfaceCurrentTemp = 175.3;
+// AmbientCurrentTemp = 200.5;
+
+  displayPredictSimpleBox(1, "Core", CoreID, String(convertCToF(CoreCurrentTemp),1));
+  displayPredictSimpleBox(2, "Surf", SurfID, String(convertCToF(SurfaceCurrentTemp),1));
+  displayPredictSimpleBox(3, "Ambi", AmbiID, String(convertCToF(AmbientCurrentTemp),1));
+
+  // displayCoreTemp();//display virtual core
+  // displaySurfaceTemp(); //virtual surface
+  // displayAmbientTemp(); //virtual ambient
+}
+
+void displayPredictTemps(){
+
+  //TODO create display all 8 sensor grid
+  if (IsPredictSimple)
+    displayPredictSimple();
+  //else displayPredictAdvance();
+  //virtual temps are computed by CPT estimating which sensor is at those spots
+}
+
+void displayCoreTemp() {
+  int x = 15;
+  int y = 450;
+  gfx->fillRect(x, y - 25, 300, 30, _BackgroundColor);
   GFXflush();
-  showTextLarge(25, y, 1, "Instant :" + String(convertCToF(InstantReadTemp)), false);
+  showText(x, y, 1, "Core S" + String(CoreID) + " :" + String(convertCToF(CoreCurrentTemp)), false);
 }
 
 void displaySurfaceTemp() {
-  int x = 250;
-  gfx->fillRect(1, x - 25, 300, 30, _BackgroundColor);
+  int x = 200;
+  int y = 450;
+  gfx->fillRect(x, y - 25, 300, 30, _BackgroundColor);
   GFXflush();
-  showText(1, x, 2, "Surface S" + String(SurfID) + " :" + String(convertCToF(SurfaceCurrentTemp)), false);
+  showText(x, y, 1, "Surface S" + String(SurfID) + " :" + String(convertCToF(SurfaceCurrentTemp)), false);
 }
 
 void displayAmbientTemp() {
-  float ACTfx = AmbientCurrentTemp * 10;
-  float ACTfr = round(ACTfx);
-  float ACTf = ACTfr / 10;
-  int ACTi = (int)(ACTf);
-  int ACTic = (int)(AmbientCurrentTemp * 100);
-  // if (ACTic < 9995) {
-  //   canvas.setCursor(105, 121);
-  // } else {
-  //   canvas.setCursor(76, 121);
-  // }
-  // canvas.print(ACTi);
-
-  int x = 290;
-  gfx->fillRect(1, x - 25, 300, 30, _BackgroundColor);
+  int x = 400;
+  int y = 450;
+  gfx->fillRect(x, y - 25, 300, 30, _BackgroundColor);
   GFXflush();
-  showText(1, x, 2, "Ambient S" + String(AmbiID) + " :" + String(convertCToF(AmbientCurrentTemp)), false);
+  showText(x, y, 2, "Ambient S" + String(AmbiID) + " :" + String(convertCToF(AmbientCurrentTemp)), false);
 }
 
 void readCPTvalue(BLECharacteristic characteristic) {
   Serial.println("in readCPTvalue");
   characteristic.read();
   characteristic.readValue(&probeStatusData, 48);
-
-  showText(1, 150, 1, "readCPT!!!", false);
+  Serial.println("readCPT!!!");
 
   StatusData* statusData = reinterpret_cast<StatusData*>(probeStatusData);
 
@@ -388,8 +447,6 @@ void readCPTvalue(BLECharacteristic characteristic) {
   //Serial.println("probeStatusData " + (String)probeStatusData);
   Serial.println("t3_c " + (String)t3_c);
 
-
-
   PredState = (int32_t)(statusData->packedPrediction.predictionstate);
   PredMode = (int32_t)(statusData->packedPrediction.predictionmode);
   PredType = (int32_t)(statusData->packedPrediction.predictiontype);
@@ -420,7 +477,7 @@ void readCPTvalue(BLECharacteristic characteristic) {
   AmbientCurrentTemp = CPT_RAY[AmbiID];  //CPT_RAY[AmbiID];
   InstantReadTemp = CPT_RAY[1];
 
-  showText(1, 175, 1, "starting to check ", false);
+  Serial.println("starting to check ");
 
   if (true) {
     displayTemps();
