@@ -177,15 +177,17 @@ bool CPTsubscribed = false;
 
 int UIpage = 1;
 bool ButtPush = false;
-unsigned long DeBounce = millis();
+//unsigned long DeBounce = millis();
 bool BLE_UI = false;
 bool TFTbl = false;
 bool LEDred = false;
 //cpt vars END
 
 //my vars START
-int CurrentScreenDisplayState = 0; //1=starting up, 2 = scan, 3 = instant, 4 = predict
+int CurrentScreenDisplayState = 0; //1=starting up, 2 = scan, 3 = instant, 4 = predict simple, 5 = predict adv 
 bool IsPredictSimple = true;
+unsigned long lastDebounceTime = millis();  // the last time the screen was touched
+unsigned long debounceDelay = 500;    // the debounce
 //my vars END
 
 bool GFXinit() {
@@ -208,14 +210,6 @@ bool GFXinit() {
   // gfx->println("Hello world");
 
   return true;
-}
-
-void animate(int wait) {
-  int x = random(1, 700);
-  int y = random(1, 350);
-  showText(x, y, 1, "Hello World", false);
-  delay(wait);
-  showText(x, y, 1, "Hello World", true);
 }
 
 float convertCToF(float celcius) {
@@ -289,10 +283,6 @@ void DisplayFrame(int color) {
   // gfx->fillRoundRect(10, 10, 780, 460, 10, _BackgroundColor);
 }
 
-// void ClearDisplay() {
-//   gfx->fillRoundRect(10, 10, 780, 460, 10, _BackgroundColor);
-// }
-
 void FlashFrame(int color, int waitTime, int numberOfFlash) {
   for (int i = 0; i <= numberOfFlash; i++) {
     DisplayFrame(color);
@@ -302,6 +292,7 @@ void FlashFrame(int color, int waitTime, int numberOfFlash) {
 
 void ClearDisplay(int state) {
   if (CurrentScreenDisplayState != state){
+    Serial.println("!!!ClearDisplay CALLED!!! " + String(CurrentScreenDisplayState) + " " + String(state));
     gfx->fillScreen(_BackgroundColor);
     CurrentScreenDisplayState = state;
   }
@@ -310,9 +301,6 @@ void ClearDisplay(int state) {
 void displayTemps() {
   if (!CPTmode)  //CPTMode-1=instant, 0 = predict
   {
-    ClearDisplay(4);
-    DisplayFrame(ORANGE);
-    displayProbeMode();
     displayPredictTemps();
   } 
   else //instant
@@ -360,25 +348,71 @@ void displayPredictSimpleBox(int gridNumber, String hdr, int sensorNumber, Strin
 }
 
 void displayPredictSimple(){
-  //debug
-//   CoreCurrentTemp = 80.1;
-// SurfaceCurrentTemp = 175.3;
-// AmbientCurrentTemp = 200.5;
-
   displayPredictSimpleBox(1, "Core", CoreID, String(convertCToF(CoreCurrentTemp),1));
   displayPredictSimpleBox(2, "Surf", SurfID, String(convertCToF(SurfaceCurrentTemp),1));
   displayPredictSimpleBox(3, "Ambi", AmbiID, String(convertCToF(AmbientCurrentTemp),1));
+}
 
-  // displayCoreTemp();//display virtual core
-  // displaySurfaceTemp(); //virtual surface
-  // displayAmbientTemp(); //virtual ambient
+String getAdvanceHeaderText(int id){
+  //CoreID
+  //SurfID
+  //AmbiID
+  if (id == CoreID)
+    return "Core";
+  else if (id == SurfID)
+    return "Surf";
+  else if (id == AmbiID)
+    return "Ambi";
+  else return "";
+}
+
+void displayPredictAdvanceBox(int columnNumber, int rowNumber, String hdr, int sensorNumber, String temp){
+  int gridSpace = 0;
+  if (columnNumber > 1)
+    gridSpace = (columnNumber-1) * 200;
+
+  int x = 15 + (gridSpace);
+  int y = 100;
+  if (rowNumber > 1)
+    y = 275; //move to second row of grid
+  //gfx->drawRect(x+5, y + 15, 165, 120, RED);//_BackgroundColor);
+  gfx->fillRect(x+5, y + 15, 165, 120, _BackgroundColor);//_BackgroundColor);
+  showText(x+80, y+30, 1, "T" + String(sensorNumber), false);
+  showText(x+15, y+90, 3, temp, false);
+  showText(x+60, y+120, 1, hdr, false);
+}
+
+void displayPredictAdvance(){
+  //row 1
+  displayPredictAdvanceBox(1,1, getAdvanceHeaderText(1), 1, String(convertCToF(CPT_RAY[1]),1));
+  displayPredictAdvanceBox(2,1, getAdvanceHeaderText(2), 2, String(convertCToF(CPT_RAY[2]),1));
+  displayPredictAdvanceBox(3,1, getAdvanceHeaderText(3), 3, String(convertCToF(CPT_RAY[3]),1));
+  displayPredictAdvanceBox(4,1, getAdvanceHeaderText(4), 4, String(convertCToF(CPT_RAY[4]),1));
+  //row 2
+  displayPredictAdvanceBox(1,2, getAdvanceHeaderText(5), 5, String(convertCToF(CPT_RAY[5]),1));
+  displayPredictAdvanceBox(2,2, getAdvanceHeaderText(6), 6, String(convertCToF(CPT_RAY[6]),1));
+  displayPredictAdvanceBox(3,2, getAdvanceHeaderText(7), 7, String(convertCToF(CPT_RAY[7]),1));
+  displayPredictAdvanceBox(4,2, getAdvanceHeaderText(8), 8, String(convertCToF(CPT_RAY[8]),1));
 }
 
 void displayPredictTemps(){
-  //TODO create display all 8 sensor grid
+  //debug force advance 
+  //IsPredictSimple = false;
+
   if (IsPredictSimple)
+  {
+    ClearDisplay(4);
+    DisplayFrame(ORANGE);
+    displayProbeMode();
     displayPredictSimple();
-  //else displayPredictAdvance();
+  }
+  else 
+  {
+    ClearDisplay(5);
+    DisplayFrame(ORANGE);
+    displayProbeMode();
+    displayPredictAdvance();
+  }
   //virtual temps are computed by CPT estimating which sensor is at those spots
 }
 
@@ -407,10 +441,9 @@ void displayAmbientTemp() {
 }
 
 void readCPTvalue(BLECharacteristic characteristic) {
-  Serial.println("in readCPTvalue");
   characteristic.read();
   characteristic.readValue(&probeStatusData, 48);
-  Serial.println("readCPT!!!");
+  Serial.println("read CPT!!!");
 
   StatusData* statusData = reinterpret_cast<StatusData*>(probeStatusData);
 
@@ -485,8 +518,6 @@ void readCPTvalue(BLECharacteristic characteristic) {
   SurfaceCurrentTemp = CPT_RAY[SurfID];
   AmbientCurrentTemp = CPT_RAY[AmbiID];  //CPT_RAY[AmbiID];
   InstantReadTemp = CPT_RAY[1];
-
-  Serial.println("starting to check ");
 
   if (true) {
     displayTemps();
@@ -601,7 +632,6 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
   // digitalWrite(TFT_BACKLITE, TFTbl);
 }
 
-
 void SetupCPT() {
   //showText(1,20,1,"Starting BLE, setupCPT...",false);
   Serial.println("Starting BLE, setupCPT...");
@@ -655,12 +685,20 @@ void TouchInit() {
   int iType = bbct.sensorType();
   Serial.printf("Touch sensor type = %s\n", szNames[iType]);
 }
-
 void TouchRead() {
   TOUCHINFO ti;
   if (bbct.getSamples(&ti)) {  // if touch event happened
-    //BLblink();
-    Serial.printf("Touch x: %d y: %d size: %d\n", ti.x[0], ti.y[0], ti.area[0]);
+    //Serial.printf("Touch x: %d y: %d size: %d\n", ti.x[0], ti.y[0], ti.area[0]);
+    if (ti.x[0] > 650 and ti.y[0] < 150) //top right corner touched
+    {
+      if ((millis() - lastDebounceTime) > debounceDelay) { //debounceDelay
+        lastDebounceTime = millis();
+        Serial.printf("CPTMode=%d IsPredictSimple=%s\n", CPTmode, String(IsPredictSimple));
+        Serial.printf("YOU TOUCHED ME AND THEN NOT\n");
+        IsPredictSimple = !IsPredictSimple;
+        displayTemps();
+      }
+    }
   }
 }
 
