@@ -5,10 +5,21 @@
 #include "FreeMono24pt7b.h"
 #include "combustionLogo.h"
 #include "Seven_Segment72pt7b.h"
+#include <bb_captouch.h> //touch screen lib
 
 #define GFX_DEV_DEVICE WAVESHARE_ESP32_S3_TFT_4_3
 #define _BackgroundColor BLACK  //blue
 #define _FontColor WHITE
+
+//touch screen stuff
+BBCapTouch bbct;
+#define TOUCH_SDA 8
+#define TOUCH_SCL 9
+#define TOUCH_INT 4
+#define TOUCH_RST 0
+
+const char* szNames[] = { "Unknown", "FT6x36", "GT911", "CST820" };
+
 //define GFX_BL 2
 
 /*TODO
@@ -364,7 +375,6 @@ void displayPredictSimple(){
 }
 
 void displayPredictTemps(){
-
   //TODO create display all 8 sensor grid
   if (IsPredictSimple)
     displayPredictSimple();
@@ -435,17 +445,16 @@ void readCPTvalue(BLECharacteristic characteristic) {
   SurfID = (int32_t)(statusData->packedSensors.surfacesensor + 4);
   AmbiID = (int32_t)(statusData->packedSensors.ambientsensor + 5);
 
-  Serial.println((String)CPTmode + " " + (String)BatStat + " " + (String)CoreID + " " + (String)SurfID + " " + (String)AmbiID);
-  Serial.println("CPT 1 " + (String)CPT_RAY[1]);
-  Serial.println("CPT 2 " + (String)CPT_RAY[2]);
-  Serial.println("CPT 3 " + (String)CPT_RAY[3]);
-  Serial.println("CPT 4 " + (String)CPT_RAY[4]);
-  Serial.println("CPT 5 " + (String)CPT_RAY[5]);
-  Serial.println("CPT 6 " + (String)CPT_RAY[6]);
-  Serial.println("CPT 7 " + (String)CPT_RAY[7]);
-  Serial.println("CPT 8 " + (String)CPT_RAY[8]);
-  //Serial.println("probeStatusData " + (String)probeStatusData);
-  Serial.println("t3_c " + (String)t3_c);
+  // Serial.println((String)CPTmode + " " + (String)BatStat + " " + (String)CoreID + " " + (String)SurfID + " " + (String)AmbiID);
+  // Serial.println("CPT 1 " + (String)CPT_RAY[1]);
+  // Serial.println("CPT 2 " + (String)CPT_RAY[2]);
+  // Serial.println("CPT 3 " + (String)CPT_RAY[3]);
+  // Serial.println("CPT 4 " + (String)CPT_RAY[4]);
+  // Serial.println("CPT 5 " + (String)CPT_RAY[5]);
+  // Serial.println("CPT 6 " + (String)CPT_RAY[6]);
+  // Serial.println("CPT 7 " + (String)CPT_RAY[7]);
+  // Serial.println("CPT 8 " + (String)CPT_RAY[8]);
+  // Serial.println("t3_c " + (String)t3_c);
 
   PredState = (int32_t)(statusData->packedPrediction.predictionstate);
   PredMode = (int32_t)(statusData->packedPrediction.predictionmode);
@@ -570,6 +579,7 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
 
   while (peripheral.connected()) {
     //TODO UIButtonCheck();
+    TouchRead();
 
     BLEService service = peripheral.service("00000100-caab-3792-3d44-97ae51c1407a");
     BLECharacteristic characteristic = service.characteristic("00000101-caab-3792-3d44-97ae51c1407a");
@@ -637,9 +647,27 @@ void DisplayScanCPT() {
   }
 }
 
+//touch setup 
+void TouchInit() {
+  Serial.println("Touch init...");
+  // Init touch device
+  bbct.init(TOUCH_SDA, TOUCH_SCL, TOUCH_RST, TOUCH_INT);
+  int iType = bbct.sensorType();
+  Serial.printf("Touch sensor type = %s\n", szNames[iType]);
+}
+
+void TouchRead() {
+  TOUCHINFO ti;
+  if (bbct.getSamples(&ti)) {  // if touch event happened
+    //BLblink();
+    Serial.printf("Touch x: %d y: %d size: %d\n", ti.x[0], ti.y[0], ti.area[0]);
+  }
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("start setup");
+  TouchInit();
   GFXinit();
   DisplayStartup();
   SetupCPT();
