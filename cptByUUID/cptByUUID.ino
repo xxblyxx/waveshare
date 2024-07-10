@@ -5,7 +5,7 @@
 #include "FreeMono24pt7b.h"
 #include "combustionLogo.h"
 #include "Seven_Segment72pt7b.h"
-#include <bb_captouch.h> //touch screen lib
+#include <bb_captouch.h>  //touch screen lib
 
 #define GFX_DEV_DEVICE WAVESHARE_ESP32_S3_TFT_4_3
 #define _BackgroundColor BLACK  //blue
@@ -85,6 +85,7 @@ float InstantReadTemp = 0;
 float TEightTemp = 0;
 
 uint8_t probeStatusData[48] = {};
+uint8_t meatNetData[48] = {};
 
 struct __attribute__((packed)) PackedProbeTemperatures {
   unsigned int temperature1 : 13;
@@ -108,6 +109,11 @@ struct __attribute__((packed)) PackedVirtualSensors {
   unsigned int coresensor : 3;
   unsigned int surfacesensor : 2;
   unsigned int ambientsensor : 2;
+  //swapped for endianess
+  // unsigned int ambientsensor : 2;
+  // unsigned int surfacesensor : 2;
+  // unsigned int coresensor : 3;
+  // unsigned int batterystatus : 1;
 };
 
 struct __attribute__((packed)) PackedPredictionStatus {
@@ -140,6 +146,11 @@ struct __attribute__((packed)) PackedFoodSafeStatus {
   unsigned int foodsafestatuspad : 5;
 };
 
+struct __attribute__((packed)) PackedNetworkInfo {
+  unsigned int hopCount : 2;
+  unsigned int reserved : 6;
+};
+
 struct __attribute__((packed)) StatusData {
   uint32_t longRangeMin;
   uint32_t longRangeMax;
@@ -149,6 +160,22 @@ struct __attribute__((packed)) StatusData {
   PackedPredictionStatus packedPrediction;
   PackedFoodSafeData packedFSdata;
   PackedFoodSafeStatus packedFSstatus;
+};
+
+struct __attribute__((packed)) MeatNetAdData {
+  uint8_t unknownOne;
+  uint8_t unknownTwo;
+  uint8_t unknownThree;
+  uint8_t unknownFour;
+  uint8_t unknownFive;
+  uint16_t vendorID;
+  uint8_t productType;
+  uint32_t serialNumber;
+  PackedProbeTemperatures packedTemperatures;
+  PackedModeID packedMode;
+  PackedVirtualSensors packedSensors;
+  PackedNetworkInfo packedNetworkInfo;
+  uint8_t reserved;
 };
 
 int CPTmode = 7;
@@ -186,10 +213,12 @@ bool LEDred = false;
 //cpt vars END
 
 //my vars START
-int CurrentScreenDisplayState = 0; //1=starting up, 2 = scan, 3 = instant, 4 = predict simple, 5 = predict adv 
+int CurrentScreenDisplayState = 0;  //1=starting up, 2 = scan, 3 = instant, 4 = predict simple, 5 = predict adv
 bool IsPredictSimple = true;
 unsigned long lastDebounceTime = millis();  // the last time the screen was touched
-unsigned long debounceDelay = 500;    // the debounce
+unsigned long debounceDelay = 500;          // the debounce
+unsigned long lastTouchTime = millis();
+unsigned long touchWait = 1500;
 //my vars END
 
 bool GFXinit() {
@@ -247,7 +276,7 @@ void showInstantTemp(String msg, bool clear) {
   else
     gfx->setTextColor(_FontColor);
   gfx->setTextSize(2);
-  gfx->setCursor(20,350);
+  gfx->setCursor(20, 350);
   //debug test temp
   //msg = "999.99";
   gfx->println(msg);
@@ -270,9 +299,9 @@ void GFXflush() {
 
 void DisplayFrame(int color) {
   int reduction = 1;
-  for (int i = 1; i <= 5; i++) { //thickness
-    gfx->drawRoundRect(i, i, 800-reduction, 480-reduction, 10, color);
-    reduction = reduction+2;
+  for (int i = 1; i <= 5; i++) {  //thickness
+    gfx->drawRoundRect(i, i, 800 - reduction, 480 - reduction, 10, color);
+    reduction = reduction + 2;
   }
 
   // gfx->drawRoundRect(1, 1, 799, 479, 10, color); //800-1
@@ -293,7 +322,7 @@ void FlashFrame(int color, int waitTime, int numberOfFlash) {
 }
 
 void ClearDisplay(int state) {
-  if (CurrentScreenDisplayState != state){
+  if (CurrentScreenDisplayState != state) {
     Serial.println("!!!ClearDisplay CALLED!!! " + String(CurrentScreenDisplayState) + " " + String(state));
     gfx->fillScreen(_BackgroundColor);
     CurrentScreenDisplayState = state;
@@ -304,8 +333,7 @@ void displayTemps() {
   if (!CPTmode)  //CPTMode-1=instant, 0 = predict
   {
     displayPredictTemps();
-  } 
-  else //instant
+  } else  //instant
   {
     ClearDisplay(3);
     DisplayFrame(GREEN);
@@ -329,33 +357,33 @@ String oldInstantTemp;
 void displayInstantTemp() {
   // gfx->fillRect(25, 50, 750, 350, _BackgroundColor);
   // GFXflush();
-  showInstantTemp(oldInstantTemp,true); //clear old temp
-  showInstantTemp(String(convertCToF(InstantReadTemp)),false);
+  showInstantTemp(oldInstantTemp, true);  //clear old temp
+  showInstantTemp(String(convertCToF(InstantReadTemp)), false);
   oldInstantTemp = String(convertCToF(InstantReadTemp));
   //showTextLarge(25, y, 1, "Instant :" + String(convertCToF(InstantReadTemp)), false);
 }
 
-void displayPredictSimpleBox(int gridNumber, String hdr, int sensorNumber, String temp){
+void displayPredictSimpleBox(int gridNumber, String hdr, int sensorNumber, String temp) {
   int gridSpace = 0;
   if (gridNumber > 1)
-    gridSpace = (gridNumber-1) * 260;
+    gridSpace = (gridNumber - 1) * 260;
 
   int x = 15 + (gridSpace);
   int y = 200;
   //Serial.println(String(gridSpace) + " " + String(x));
-  gfx->fillRect(x, y + 15, 240, 120, _BackgroundColor);//_BackgroundColor);
-  showText(x+50, y, 3, hdr, false);
-  showText(x+80, y+55, 2, "T" + String(sensorNumber), false);
-  showText(x+15, y+120, 4, temp, false);
+  gfx->fillRect(x, y + 15, 240, 120, _BackgroundColor);  //_BackgroundColor);
+  showText(x + 50, y, 3, hdr, false);
+  showText(x + 80, y + 55, 2, "T" + String(sensorNumber), false);
+  showText(x + 15, y + 120, 4, temp, false);
 }
 
-void displayPredictSimple(){
-  displayPredictSimpleBox(1, "Core", CoreID, String(convertCToF(CoreCurrentTemp),1));
-  displayPredictSimpleBox(2, "Surf", SurfID, String(convertCToF(SurfaceCurrentTemp),1));
-  displayPredictSimpleBox(3, "Ambi", AmbiID, String(convertCToF(AmbientCurrentTemp),1));
+void displayPredictSimple() {
+  displayPredictSimpleBox(1, "Core", CoreID, String(convertCToF(CoreCurrentTemp), 1));
+  displayPredictSimpleBox(2, "Surf", SurfID, String(convertCToF(SurfaceCurrentTemp), 1));
+  displayPredictSimpleBox(3, "Ambi", AmbiID, String(convertCToF(AmbientCurrentTemp), 1));
 }
 
-String getAdvanceHeaderText(int id){
+String getAdvanceHeaderText(int id) {
   //CoreID
   //SurfID
   //AmbiID
@@ -368,48 +396,45 @@ String getAdvanceHeaderText(int id){
   else return "";
 }
 
-void displayPredictAdvanceBox(int columnNumber, int rowNumber, String hdr, int sensorNumber, String temp){
+void displayPredictAdvanceBox(int columnNumber, int rowNumber, String hdr, int sensorNumber, String temp) {
   int gridSpace = 0;
   if (columnNumber > 1)
-    gridSpace = (columnNumber-1) * 200;
+    gridSpace = (columnNumber - 1) * 200;
 
   int x = 15 + (gridSpace);
   int y = 100;
   if (rowNumber > 1)
-    y = 275; //move to second row of grid
+    y = 275;  //move to second row of grid
   //gfx->drawRect(x+5, y + 15, 165, 120, RED);//_BackgroundColor);
-  gfx->fillRect(x+5, y + 15, 165, 120, _BackgroundColor);//_BackgroundColor);
-  showText(x+80, y+30, 1, "T" + String(sensorNumber), false);
-  showText(x+15, y+90, 3, temp, false);
-  showText(x+60, y+120, 1, hdr, false);
+  gfx->fillRect(x + 5, y + 15, 165, 120, _BackgroundColor);  //_BackgroundColor);
+  showText(x + 80, y + 30, 1, "T" + String(sensorNumber), false);
+  showText(x + 15, y + 90, 3, temp, false);
+  showText(x + 60, y + 120, 1, hdr, false);
 }
 
-void displayPredictAdvance(){
+void displayPredictAdvance() {
   //row 1
-  displayPredictAdvanceBox(1,1, getAdvanceHeaderText(1), 1, String(convertCToF(CPT_RAY[1]),1));
-  displayPredictAdvanceBox(2,1, getAdvanceHeaderText(2), 2, String(convertCToF(CPT_RAY[2]),1));
-  displayPredictAdvanceBox(3,1, getAdvanceHeaderText(3), 3, String(convertCToF(CPT_RAY[3]),1));
-  displayPredictAdvanceBox(4,1, getAdvanceHeaderText(4), 4, String(convertCToF(CPT_RAY[4]),1));
+  displayPredictAdvanceBox(1, 1, getAdvanceHeaderText(1), 1, String(convertCToF(CPT_RAY[1]), 1));
+  displayPredictAdvanceBox(2, 1, getAdvanceHeaderText(2), 2, String(convertCToF(CPT_RAY[2]), 1));
+  displayPredictAdvanceBox(3, 1, getAdvanceHeaderText(3), 3, String(convertCToF(CPT_RAY[3]), 1));
+  displayPredictAdvanceBox(4, 1, getAdvanceHeaderText(4), 4, String(convertCToF(CPT_RAY[4]), 1));
   //row 2
-  displayPredictAdvanceBox(1,2, getAdvanceHeaderText(5), 5, String(convertCToF(CPT_RAY[5]),1));
-  displayPredictAdvanceBox(2,2, getAdvanceHeaderText(6), 6, String(convertCToF(CPT_RAY[6]),1));
-  displayPredictAdvanceBox(3,2, getAdvanceHeaderText(7), 7, String(convertCToF(CPT_RAY[7]),1));
-  displayPredictAdvanceBox(4,2, getAdvanceHeaderText(8), 8, String(convertCToF(CPT_RAY[8]),1));
+  displayPredictAdvanceBox(1, 2, getAdvanceHeaderText(5), 5, String(convertCToF(CPT_RAY[5]), 1));
+  displayPredictAdvanceBox(2, 2, getAdvanceHeaderText(6), 6, String(convertCToF(CPT_RAY[6]), 1));
+  displayPredictAdvanceBox(3, 2, getAdvanceHeaderText(7), 7, String(convertCToF(CPT_RAY[7]), 1));
+  displayPredictAdvanceBox(4, 2, getAdvanceHeaderText(8), 8, String(convertCToF(CPT_RAY[8]), 1));
 }
 
-void displayPredictTemps(){
-  //debug force advance 
+void displayPredictTemps() {
+  //debug force advance
   //IsPredictSimple = false;
 
-  if (IsPredictSimple)
-  {
+  if (IsPredictSimple) {
     ClearDisplay(4);
     DisplayFrame(ORANGE);
     displayProbeMode();
     displayPredictSimple();
-  }
-  else 
-  {
+  } else {
     ClearDisplay(5);
     DisplayFrame(ORANGE);
     displayProbeMode();
@@ -442,45 +467,55 @@ void displayAmbientTemp() {
   showText(x, y, 2, "Ambient S" + String(AmbiID) + " :" + String(convertCToF(AmbientCurrentTemp)), false);
 }
 
-void readCPTvalue(BLECharacteristic characteristic) {
-  characteristic.read();
-  characteristic.readValue(&probeStatusData, 48);
+void readCPTvalue() {
   Serial.println("read CPT!!!");
 
-  StatusData* statusData = reinterpret_cast<StatusData*>(probeStatusData);
+  MeatNetAdData* meatNetAdData = reinterpret_cast<MeatNetAdData*>(meatNetData);
 
-  int32_t t1_c = (int32_t)(statusData->packedTemperatures.temperature1 * 5) - 2000;
+  //debug data
+  // Serial.println("xxpackedSensors: ");
+  // Serial.println(meatNetAdData->xxpackedSensors, HEX);
+
+  // Serial.println("packedMode : ");
+  // Serial.println(meatNetAdData->packedMode.probemode);
+  // Serial.println(meatNetAdData->packedMode.colorid);
+  // Serial.println(meatNetAdData->packedMode.probeid);
+
+  int32_t t1_c = (int32_t)(meatNetAdData->packedTemperatures.temperature1 * 5) - 2000;
   CPT_RAY[1] = (float)(t1_c) / 100.0;
 
-  int32_t t2_c = (int32_t)(statusData->packedTemperatures.temperature2 * 5) - 2000;
+  int32_t t2_c = (int32_t)(meatNetAdData->packedTemperatures.temperature2 * 5) - 2000;
   CPT_RAY[2] = (float)(t2_c) / 100.0;
 
-  int32_t t3_c = (int32_t)(statusData->packedTemperatures.temperature3 * 5) - 2000;
+  int32_t t3_c = (int32_t)(meatNetAdData->packedTemperatures.temperature3 * 5) - 2000;
   CPT_RAY[3] = (float)(t3_c) / 100.0;
 
-  int32_t t4_c = (int32_t)(statusData->packedTemperatures.temperature4 * 5) - 2000;
+  int32_t t4_c = (int32_t)(meatNetAdData->packedTemperatures.temperature4 * 5) - 2000;
   CPT_RAY[4] = (float)(t4_c) / 100.0;
 
-  int32_t t5_c = (int32_t)(statusData->packedTemperatures.temperature5 * 5) - 2000;
+  int32_t t5_c = (int32_t)(meatNetAdData->packedTemperatures.temperature5 * 5) - 2000;
   CPT_RAY[5] = (float)(t5_c) / 100.0;
 
-  int32_t t6_c = (int32_t)(statusData->packedTemperatures.temperature6 * 5) - 2000;
+  int32_t t6_c = (int32_t)(meatNetAdData->packedTemperatures.temperature6 * 5) - 2000;
   CPT_RAY[6] = (float)(t6_c) / 100.0;
 
-  int32_t t7_c = (int32_t)(statusData->packedTemperatures.temperature7 * 5) - 2000;
+  int32_t t7_c = (int32_t)(meatNetAdData->packedTemperatures.temperature7 * 5) - 2000;
   CPT_RAY[7] = (float)(t7_c) / 100.0;
 
-  int32_t t8_c = (int32_t)(statusData->packedTemperatures.temperature8 * 5) - 2000;
+  int32_t t8_c = (int32_t)(meatNetAdData->packedTemperatures.temperature8 * 5) - 2000;
   CPT_RAY[8] = (float)(t8_c) / 100.0;
 
-  CPTmode = (int32_t)(statusData->packedMode.probemode);
+  CPTmode = (int32_t)(meatNetAdData->packedMode.probemode);
 
-  BatStat = (int32_t)(statusData->packedSensors.batterystatus);
-  CoreID = (int32_t)(statusData->packedSensors.coresensor + 1);
-  SurfID = (int32_t)(statusData->packedSensors.surfacesensor + 4);
-  AmbiID = (int32_t)(statusData->packedSensors.ambientsensor + 5);
+  BatStat = (int32_t)(meatNetAdData->packedSensors.batterystatus);
+  // CoreID = (int32_t)(meatNetAdData->packedSensors.coresensor + 1);
+  // SurfID = (int32_t)(meatNetAdData->packedSensors.surfacesensor + 4);
+  // AmbiID = (int32_t)(meatNetAdData->packedSensors.ambientsensor + 5);
+  CoreID = (int32_t)(meatNetAdData->packedSensors.coresensor + 1);
+  SurfID = (int32_t)(meatNetAdData->packedSensors.surfacesensor + 4);
+  AmbiID = (int32_t)(meatNetAdData->packedSensors.ambientsensor + 5);
 
-  // Serial.println((String)CPTmode + " " + (String)BatStat + " " + (String)CoreID + " " + (String)SurfID + " " + (String)AmbiID);
+  Serial.println((String)CPTmode + " " + (String)BatStat + " " + (String)CoreID + " " + (String)SurfID + " " + (String)AmbiID);
   // Serial.println("CPT 1 " + (String)CPT_RAY[1]);
   // Serial.println("CPT 2 " + (String)CPT_RAY[2]);
   // Serial.println("CPT 3 " + (String)CPT_RAY[3]);
@@ -489,32 +524,31 @@ void readCPTvalue(BLECharacteristic characteristic) {
   // Serial.println("CPT 6 " + (String)CPT_RAY[6]);
   // Serial.println("CPT 7 " + (String)CPT_RAY[7]);
   // Serial.println("CPT 8 " + (String)CPT_RAY[8]);
-  // Serial.println("t3_c " + (String)t3_c);
 
-  PredState = (int32_t)(statusData->packedPrediction.predictionstate);
-  PredMode = (int32_t)(statusData->packedPrediction.predictionmode);
-  PredType = (int32_t)(statusData->packedPrediction.predictiontype);
+  // PredState = (int32_t)(meatNetAdData->packedPrediction.predictionstate);
+  // PredMode = (int32_t)(meatNetAdData->packedPrediction.predictionmode);
+  // PredType = (int32_t)(meatNetAdData->packedPrediction.predictiontype);
 
-  int32_t pspt = (int32_t)(statusData->packedPrediction.predictionsetpointtemperature);
-  PredSetPointT = (float)(pspt) / 10.0;
+  // int32_t pspt = (int32_t)(meatNetAdData->packedPrediction.predictionsetpointtemperature);
+  // PredSetPointT = (float)(pspt) / 10.0;
 
-  int32_t phst = (int32_t)(statusData->packedPrediction.heatstarttemperature);
-  PredHeatStartT = (float)(phst) / 10.0;
+  // int32_t phst = (int32_t)(meatNetAdData->packedPrediction.heatstarttemperature);
+  // PredHeatStartT = (float)(phst) / 10.0;
 
-  PredSeconds = (int32_t)(statusData->packedPrediction.predictionvalueseconds + 1);
+  // PredSeconds = (int32_t)(meatNetAdData->packedPrediction.predictionvalueseconds + 1);
 
-  int32_t pect = (int32_t)(statusData->packedPrediction.estimatedcoretemperature) - 200;
-  PredCoreEst = (float)(pect) / 10.0;
+  // int32_t pect = (int32_t)(meatNetAdData->packedPrediction.estimatedcoretemperature) - 200;
+  // PredCoreEst = (float)(pect) / 10.0;
 
-  PredPercent = 100.0 * ((PredCoreEst - PredHeatStartT) / (PredSetPointT - PredHeatStartT));
+  // PredPercent = 100.0 * ((PredCoreEst - PredHeatStartT) / (PredSetPointT - PredHeatStartT));
 
-  FoodMode = (int32_t)(statusData->packedFSdata.foodsafemode);
-  int32_t targetfood = (int32_t)(statusData->packedFSdata.foodsafetargetlogreduction);
-  FoodTarget = (float)(targetfood) / 10.0;
+  // FoodMode = (int32_t)(meatNetAdData->packedFSdata.foodsafemode);
+  // int32_t targetfood = (int32_t)(meatNetAdData->packedFSdata.foodsafetargetlogreduction);
+  // FoodTarget = (float)(targetfood) / 10.0;
 
-  FoodState = (int32_t)(statusData->packedFSstatus.foodsafestate);
-  int32_t loggedfood = (int32_t)(statusData->packedFSstatus.foodsafelogreduction);
-  FoodLog = (float)(loggedfood) / 10.0;
+  // FoodState = (int32_t)(meatNetAdData->packedFSstatus.foodsafestate);
+  // int32_t loggedfood = (int32_t)(meatNetAdData->packedFSstatus.foodsafelogreduction);
+  // FoodLog = (float)(loggedfood) / 10.0;
 
   CoreCurrentTemp = CPT_RAY[CoreID];
   SurfaceCurrentTemp = CPT_RAY[SurfID];
@@ -523,7 +557,7 @@ void readCPTvalue(BLECharacteristic characteristic) {
 
   if (true) {
     displayTemps();
-    
+
     //showText(1,200,2,"Got Temp :" + String(InstantReadTemp), false);
 
     // canvas.fillScreen(ST77XX_BLACK);
@@ -620,7 +654,7 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
       // DrawBezel(ST77XX_BLUE);
       // tft.drawRGBBitmap(0, 0, canvas.getBuffer(), 240, 135);
       blinkAsterisks();
-      readCPTvalue(service.characteristic("00000101-caab-3792-3d44-97ae51c1407a"));
+      //readCPTvalue(service.characteristic("00000101-caab-3792-3d44-97ae51c1407a"));
     }
     delay(10);
   }
@@ -635,20 +669,23 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
 }
 
 void SetupCPT() {
-  //showText(1,20,1,"Starting BLE, setupCPT...",false);
-  Serial.println("Starting BLE, setupCPT...");
-
+  // begin initialization
   if (!BLE.begin()) {
-    showText(1, 450, 1, "BLE module failed!", false);
-    Serial.println("BLE module failed!");
-    while (!BLE_UI) {
-      blinkAsterisks();
-    }
+    Serial.println("starting BLE failed!");
+
+
+    while (1)
+      ;
   }
+
+  Serial.println("Starting BLE scan, setupCPT...");
+
+  // start scanning for peripheral
+  BLE.scan(true);  //set to TRUE to allow duplicates, in our use case, we need to allow dupes
+
   BLE_UI = true;
   //showText(1,45,1,"BLE Ready", false);
-  Serial.println("BLE Ready, calling BLE.setEventHandler");
-  BLE.setEventHandler(BLEDiscovered, CPTdiscoveredHandler);
+  Serial.println("BLE scan starting...");
 }
 
 void DisplayStartup() {
@@ -662,8 +699,8 @@ void DisplayStartup() {
   }
 }
 
-void DisplayCombustionLogo(int x, int y, int width, int height, int color){
-    gfx->drawBitmap(x,y, CombustionLogoBitmap, width, height, color);
+void DisplayCombustionLogo(int x, int y, int width, int height, int color) {
+  gfx->drawBitmap(x, y, CombustionLogoBitmap, width, height, color);
 }
 
 void DisplayScanCPT() {
@@ -671,15 +708,15 @@ void DisplayScanCPT() {
   DisplayFrame(YELLOW);
   for (int i = 0; i <= 3; i++) {
     showTextLarge(150, 375, 1, "Scanning for CPT...", false);
-    DisplayCombustionLogo(300,100, 200, 200, RED);
+    DisplayCombustionLogo(300, 100, 200, 200, RED);
     delay(250);
-    DisplayCombustionLogo(300,100, 200, 200, ORANGE);
+    DisplayCombustionLogo(300, 100, 200, 200, ORANGE);
     //showTextLarge(150, 50, 1, "Scanning for CPT...", true);
     delay(450);
   }
 }
 
-//touch setup 
+//touch setup
 void TouchInit() {
   Serial.println("Touch init...");
   // Init touch device
@@ -691,9 +728,9 @@ void TouchRead() {
   TOUCHINFO ti;
   if (bbct.getSamples(&ti)) {  // if touch event happened
     //Serial.printf("Touch x: %d y: %d size: %d\n", ti.x[0], ti.y[0], ti.area[0]);
-    if (ti.x[0] > 650 and ti.y[0] < 150) //top right corner touched
+    if (ti.x[0] > 650 and ti.y[0] < 150)  //top right corner touched
     {
-      if ((millis() - lastDebounceTime) > debounceDelay) { //debounceDelay
+      if ((millis() - lastDebounceTime) > debounceDelay) {  //debounceDelay
         lastDebounceTime = millis();
         Serial.printf("CPTMode=%d IsPredictSimple=%s\n", CPTmode, String(IsPredictSimple));
         Serial.printf("YOU TOUCHED ME AND THEN NOT\n");
@@ -704,6 +741,13 @@ void TouchRead() {
   }
 }
 
+void printHex(uint8_t num) {
+  char hexCar[2];
+
+  sprintf(hexCar, "%02X", num);
+  Serial.print(hexCar);
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("start setup");
@@ -711,20 +755,51 @@ void setup() {
   GFXinit();
   DisplayStartup();
   SetupCPT();
+  DisplayScanCPT();
 }
 
 void loop() {
   Serial.println("start loop");
-  //blinkAsterisks();
-  //cpt stuff
-  if (!CPTscanning) {
-    //ENTER YOUR CPT MAC ADDRESS HERE...
-    BLE.scanForAddress("c2:71:17:61:f9:d0");  //("a0:b1:c2:d3:e4:f5");
-    //BLE.scanForAddress("1b:3a:34:c5:2b:f1"); 
-    CPTscanning = true;
+
+  BLEDevice peripheral = BLE.available();
+
+  if (peripheral && peripheral.address().startsWith("f1:12:1c:ca:a1:3b")) {  //cpt booster
+    Serial.println("Discovered a peripheral ");
+    Serial.println("-----------------------");
+    // print address
+    Serial.print("Address: ");
+    Serial.println(peripheral.address());
+    // print the local name, if present
+    if (peripheral.hasLocalName()) {
+      Serial.print("Local Name: ");
+      Serial.println(peripheral.localName());
+    }
+    if (peripheral.hasAdvertisementData()) {
+      Serial.print("ad data: ");
+      Serial.print("length:");
+      Serial.println(String(peripheral.advertisementDataLength()));
+      Serial.println("TODO need to get data");
+
+      // Serial.println("RSSI: ");
+      // Serial.println(peripheral.rssi());
+
+      int adLength = peripheral.advertisementData(meatNetData, 48);
+      Serial.println("Advertisement 0x16: 0x ad length =" + String(adLength));
+
+      for (int i = 0; i < sizeof(meatNetData); i++) {
+        printHex(meatNetData[i]);
+      }
+
+      readCPTvalue();
+      while(1) //keep reading touch screen
+      {
+        if ((millis() - lastTouchTime) > touchWait) {
+          Serial.println("breaking out of touch screen loop");  
+          lastTouchTime = millis();
+          break;
+        }
+        TouchRead();
+      }
+    }
   }
-  Serial.println("BLE Polling");
-  DisplayScanCPT();
-  BLE.poll();
-  delay(100);
 }
