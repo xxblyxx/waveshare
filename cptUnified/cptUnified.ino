@@ -20,7 +20,6 @@ BBCapTouch bbct;
 
 const char* szNames[] = { "Unknown", "FT6x36", "GT911", "CST820" };
 
-//define GFX_BL 2
 
 /*TODO
 - when found, display CPT Found, initializing, in a better format
@@ -190,6 +189,16 @@ int CurrentScreenDisplayState = 0; //1=starting up, 2 = scan, 3 = instant, 4 = p
 bool IsPredictSimple = true;
 unsigned long lastDebounceTime = millis();  // the last time the screen was touched
 unsigned long debounceDelay = 500;    // the debounce
+unsigned long lastTouchTime = millis();
+unsigned long touchWait = 1500;
+//vars for switching routine
+bool IsUseProbe = true; //if false, try to connect to MeatNet
+bool IsSetupCPT = false;
+bool IsSetupMeatNet = false;
+unsigned long switchDeviceWait = 30000; //30 seconds before switching
+unsigned long lastProbeConnectTime = millis(); //last time connection was made to probe
+unsigned long lastMeatNetConnectTime = millis();  //last time connection was made to meatNet
+
 //my vars END
 
 bool GFXinit() {
@@ -446,6 +455,7 @@ void readCPTvalue(BLECharacteristic characteristic) {
   characteristic.read();
   characteristic.readValue(&probeStatusData, 48);
   Serial.println("read CPT!!!");
+  lastProbeConnectTime = millis();
 
   StatusData* statusData = reinterpret_cast<StatusData*>(probeStatusData);
 
@@ -603,13 +613,6 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
     }
   }
 
-  // delay(1000);
-  // canvas.fillScreen(ST77XX_BLACK);
-  // canvas.setFont(&FreeMonoBold12pt7b);
-  // DrawBezel(0xB5B6);
-  // TODO BattDisplay();
-  // tft.drawRGBBitmap(0, 0, canvas.getBuffer(), 240, 135);
-
   while (peripheral.connected()) {
     //TODO UIButtonCheck();
     TouchRead();
@@ -617,8 +620,6 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
     BLEService service = peripheral.service("00000100-caab-3792-3d44-97ae51c1407a");
     BLECharacteristic characteristic = service.characteristic("00000101-caab-3792-3d44-97ae51c1407a");
     if (characteristic.valueUpdated()) {
-      // DrawBezel(ST77XX_BLUE);
-      // tft.drawRGBBitmap(0, 0, canvas.getBuffer(), 240, 135);
       blinkAsterisks();
       readCPTvalue(service.characteristic("00000101-caab-3792-3d44-97ae51c1407a"));
     }
@@ -635,7 +636,7 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
 }
 
 void SetupCPT() {
-  //showText(1,20,1,"Starting BLE, setupCPT...",false);
+  IsSetupCPT = true;
   Serial.println("Starting BLE, setupCPT...");
 
   if (!BLE.begin()) {
@@ -666,11 +667,11 @@ void DisplayCombustionLogo(int x, int y, int width, int height, int color){
     gfx->drawBitmap(x,y, CombustionLogoBitmap, width, height, color);
 }
 
-void DisplayScanCPT() {
+void DisplayScanCPT(String device) {
   ClearDisplay(2);
   DisplayFrame(YELLOW);
   for (int i = 0; i <= 3; i++) {
-    showTextLarge(150, 375, 1, "Scanning for CPT...", false);
+    showTextLarge(75, 375, 1, "Scanning for " + device + "...", false);
     DisplayCombustionLogo(300,100, 200, 200, RED);
     delay(250);
     DisplayCombustionLogo(300,100, 200, 200, ORANGE);
@@ -704,27 +705,60 @@ void TouchRead() {
   }
 }
 
+void resetLastConnectTime() {
+    lastProbeConnectTime = millis(); //reset
+    lastMeatNetConnectTime = millis(); //reset
+}
+
 void setup() {
   Serial.begin(115200);
   Serial.println("start setup");
   TouchInit();
   GFXinit();
   DisplayStartup();
-  SetupCPT();
 }
 
 void loop() {
   Serial.println("start loop");
-  //blinkAsterisks();
-  //cpt stuff
-  if (!CPTscanning) {
-    //ENTER YOUR CPT MAC ADDRESS HERE...
-    BLE.scanForAddress("c2:71:17:61:f9:d0");  //("a0:b1:c2:d3:e4:f5");
-    //BLE.scanForAddress("1b:3a:34:c5:2b:f1"); 
-    CPTscanning = true;
+  if (IsSetupCPT == false)
+    SetupCPT();
+
+  if (IsUseProbe && (millis() - lastProbeConnectTime) > switchDeviceWait) { //debounceDelay
+    Serial.println("!!! SWITCH DEVICE, LOOK FOR MeatNet!!!");
+    CurrentScreenDisplayState = 1;
+    resetLastConnectTime(); //reset last connect times
+    //todo kick in logic to switch to meatnet
+    IsUseProbe = false;
+    //todo add logic to disconnect the BLE services so we can engage the advert scan
   }
-  Serial.println("BLE Polling");
-  DisplayScanCPT();
-  BLE.poll();
+  else if (!IsUseProbe && (millis() - lastMeatNetConnectTime) > switchDeviceWait) { //debounceDelay
+    Serial.println("!!! SWITCH DEVICE, LOOK FOR Probe!!!");
+    CurrentScreenDisplayState = 1;
+    resetLastConnectTime(); //reset last connect times
+    //todo kick in logic to switch to meatnet
+    IsUseProbe = true;
+    //todo add logic to disconnect the BLE services so we can engage the advert scan
+  }
+
+  if (IsUseProbe) //poll for probe
+  {
+    //cpt stuff
+    if (!CPTscanning) {
+      //ENTER YOUR CPT MAC ADDRESS HERE...
+      BLE.scanForAddress("c2:71:17:61:f9:d0");  //("a0:b1:c2:d3:e4:f5");
+      CPTscanning = true;
+    }
+    Serial.println("BLE Polling");
+    DisplayScanCPT("Probe");
+    BLE.poll();
+    delay(100);
+  }
+  else
+  {
+    Serial.println("TODO start advert scan");
+    DisplayScanCPT("MeatNet");
+    delay(1000);
+  }
+
   delay(100);
 }
