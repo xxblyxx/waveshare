@@ -677,12 +677,9 @@ void SetupCPT() {
     while (1)
       ;
   }
-
   Serial.println("Starting BLE scan, setupCPT...");
-
   // start scanning for peripheral
   BLE.scan(true);  //set to TRUE to allow duplicates, in our use case, we need to allow dupes
-
   BLE_UI = true;
   //showText(1,45,1,"BLE Ready", false);
   Serial.println("BLE scan starting...");

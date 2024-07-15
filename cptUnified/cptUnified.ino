@@ -6,10 +6,14 @@
 #include "combustionLogo.h"
 #include "Seven_Segment72pt7b.h"
 #include <bb_captouch.h> //touch screen lib
+#include <EEPROM.h>
 
 #define GFX_DEV_DEVICE WAVESHARE_ESP32_S3_TFT_4_3
 #define _BackgroundColor BLACK  //blue
 #define _FontColor WHITE
+
+//use eeprom to store which device to gather temp from, probe or meatnet(booster)
+#define EEPROM_SIZE 1
 
 //touch screen stuff
 BBCapTouch bbct;
@@ -84,6 +88,7 @@ float InstantReadTemp = 0;
 float TEightTemp = 0;
 
 uint8_t probeStatusData[48] = {};
+uint8_t meatNetData[48] = {};
 
 struct __attribute__((packed)) PackedProbeTemperatures {
   unsigned int temperature1 : 13;
@@ -107,6 +112,18 @@ struct __attribute__((packed)) PackedVirtualSensors {
   unsigned int coresensor : 3;
   unsigned int surfacesensor : 2;
   unsigned int ambientsensor : 2;
+};
+
+struct __attribute__((packed)) PackedVirtualSensorsMeatNet {
+  unsigned int batterystatus : 1;
+  unsigned int coresensor : 3;
+  unsigned int surfacesensor : 2;
+  unsigned int ambientsensor : 2;
+  //swapped for endianess
+  // unsigned int ambientsensor : 2;
+  // unsigned int surfacesensor : 2;
+  // unsigned int coresensor : 3;
+  // unsigned int batterystatus : 1;
 };
 
 struct __attribute__((packed)) PackedPredictionStatus {
@@ -148,6 +165,27 @@ struct __attribute__((packed)) StatusData {
   PackedPredictionStatus packedPrediction;
   PackedFoodSafeData packedFSdata;
   PackedFoodSafeStatus packedFSstatus;
+};
+
+struct __attribute__((packed)) PackedNetworkInfo {
+  unsigned int hopCount : 2;
+  unsigned int reserved : 6;
+};
+
+struct __attribute__((packed)) MeatNetAdData {
+  uint8_t unknownOne;
+  uint8_t unknownTwo;
+  uint8_t unknownThree;
+  uint8_t unknownFour;
+  uint8_t unknownFive;
+  uint16_t vendorID;
+  uint8_t productType;
+  uint32_t serialNumber;
+  PackedProbeTemperatures packedTemperatures;
+  PackedModeID packedMode;
+  PackedVirtualSensorsMeatNet packedSensors;
+  PackedNetworkInfo packedNetworkInfo;
+  uint8_t reserved;
 };
 
 int CPTmode = 7;
@@ -192,10 +230,11 @@ unsigned long debounceDelay = 500;    // the debounce
 unsigned long lastTouchTime = millis();
 unsigned long touchWait = 1500;
 //vars for switching routine
-bool IsUseProbe = true; //if false, try to connect to MeatNet
+bool IsUseProbe; //if false, try to connect to MeatNet
 bool IsSetupCPT = false;
-bool IsSetupMeatNet = false;
+bool IsSetupCPTMeatNet = false;
 unsigned long switchDeviceWait = 30000; //30 seconds before switching
+unsigned long switchDeviceWaitMeatNet = 60000; //60 seconds for MeatNet
 unsigned long lastProbeConnectTime = millis(); //last time connection was made to probe
 unsigned long lastMeatNetConnectTime = millis();  //last time connection was made to meatNet
 
@@ -560,6 +599,101 @@ void readCPTvalue(BLECharacteristic characteristic) {
   }
 }
 
+void readCPTvalueMeatNet() {
+  Serial.println("read MeatNet!!!");
+  lastMeatNetConnectTime = millis();
+
+  MeatNetAdData* meatNetAdData = reinterpret_cast<MeatNetAdData*>(meatNetData);
+
+  //debug data
+  // Serial.println("xxpackedSensors: ");
+  // Serial.println(meatNetAdData->xxpackedSensors, HEX);
+
+  // Serial.println("packedMode : ");
+  // Serial.println(meatNetAdData->packedMode.probemode);
+  // Serial.println(meatNetAdData->packedMode.colorid);
+  // Serial.println(meatNetAdData->packedMode.probeid);
+
+  int32_t t1_c = (int32_t)(meatNetAdData->packedTemperatures.temperature1 * 5) - 2000;
+  CPT_RAY[1] = (float)(t1_c) / 100.0;
+
+  int32_t t2_c = (int32_t)(meatNetAdData->packedTemperatures.temperature2 * 5) - 2000;
+  CPT_RAY[2] = (float)(t2_c) / 100.0;
+
+  int32_t t3_c = (int32_t)(meatNetAdData->packedTemperatures.temperature3 * 5) - 2000;
+  CPT_RAY[3] = (float)(t3_c) / 100.0;
+
+  int32_t t4_c = (int32_t)(meatNetAdData->packedTemperatures.temperature4 * 5) - 2000;
+  CPT_RAY[4] = (float)(t4_c) / 100.0;
+
+  int32_t t5_c = (int32_t)(meatNetAdData->packedTemperatures.temperature5 * 5) - 2000;
+  CPT_RAY[5] = (float)(t5_c) / 100.0;
+
+  int32_t t6_c = (int32_t)(meatNetAdData->packedTemperatures.temperature6 * 5) - 2000;
+  CPT_RAY[6] = (float)(t6_c) / 100.0;
+
+  int32_t t7_c = (int32_t)(meatNetAdData->packedTemperatures.temperature7 * 5) - 2000;
+  CPT_RAY[7] = (float)(t7_c) / 100.0;
+
+  int32_t t8_c = (int32_t)(meatNetAdData->packedTemperatures.temperature8 * 5) - 2000;
+  CPT_RAY[8] = (float)(t8_c) / 100.0;
+
+  CPTmode = (int32_t)(meatNetAdData->packedMode.probemode);
+
+  BatStat = (int32_t)(meatNetAdData->packedSensors.batterystatus);
+  // CoreID = (int32_t)(meatNetAdData->packedSensors.coresensor + 1);
+  // SurfID = (int32_t)(meatNetAdData->packedSensors.surfacesensor + 4);
+  // AmbiID = (int32_t)(meatNetAdData->packedSensors.ambientsensor + 5);
+  CoreID = (int32_t)(meatNetAdData->packedSensors.coresensor + 1);
+  SurfID = (int32_t)(meatNetAdData->packedSensors.surfacesensor + 4);
+  AmbiID = (int32_t)(meatNetAdData->packedSensors.ambientsensor + 5);
+
+  Serial.println((String)CPTmode + " " + (String)BatStat + " " + (String)CoreID + " " + (String)SurfID + " " + (String)AmbiID);
+  // Serial.println("CPT 1 " + (String)CPT_RAY[1]);
+  // Serial.println("CPT 2 " + (String)CPT_RAY[2]);
+  // Serial.println("CPT 3 " + (String)CPT_RAY[3]);
+  // Serial.println("CPT 4 " + (String)CPT_RAY[4]);
+  // Serial.println("CPT 5 " + (String)CPT_RAY[5]);
+  // Serial.println("CPT 6 " + (String)CPT_RAY[6]);
+  // Serial.println("CPT 7 " + (String)CPT_RAY[7]);
+  // Serial.println("CPT 8 " + (String)CPT_RAY[8]);
+
+  // PredState = (int32_t)(meatNetAdData->packedPrediction.predictionstate);
+  // PredMode = (int32_t)(meatNetAdData->packedPrediction.predictionmode);
+  // PredType = (int32_t)(meatNetAdData->packedPrediction.predictiontype);
+
+  // int32_t pspt = (int32_t)(meatNetAdData->packedPrediction.predictionsetpointtemperature);
+  // PredSetPointT = (float)(pspt) / 10.0;
+
+  // int32_t phst = (int32_t)(meatNetAdData->packedPrediction.heatstarttemperature);
+  // PredHeatStartT = (float)(phst) / 10.0;
+
+  // PredSeconds = (int32_t)(meatNetAdData->packedPrediction.predictionvalueseconds + 1);
+
+  // int32_t pect = (int32_t)(meatNetAdData->packedPrediction.estimatedcoretemperature) - 200;
+  // PredCoreEst = (float)(pect) / 10.0;
+
+  // PredPercent = 100.0 * ((PredCoreEst - PredHeatStartT) / (PredSetPointT - PredHeatStartT));
+
+  // FoodMode = (int32_t)(meatNetAdData->packedFSdata.foodsafemode);
+  // int32_t targetfood = (int32_t)(meatNetAdData->packedFSdata.foodsafetargetlogreduction);
+  // FoodTarget = (float)(targetfood) / 10.0;
+
+  // FoodState = (int32_t)(meatNetAdData->packedFSstatus.foodsafestate);
+  // int32_t loggedfood = (int32_t)(meatNetAdData->packedFSstatus.foodsafelogreduction);
+  // FoodLog = (float)(loggedfood) / 10.0;
+
+  CoreCurrentTemp = CPT_RAY[CoreID];
+  SurfaceCurrentTemp = CPT_RAY[SurfID];
+  AmbientCurrentTemp = CPT_RAY[AmbiID];  //CPT_RAY[AmbiID];
+  InstantReadTemp = CPT_RAY[1];
+
+  if (true) {
+    displayTemps();
+  }
+}
+
+
 void CPTdiscoveredHandler(BLEDevice peripheral) {
   showText(1, 450, 1, "in CPTdiscoveredHandler", false);
   BLE.stopScan();
@@ -569,6 +703,8 @@ void CPTdiscoveredHandler(BLEDevice peripheral) {
   delay(2000);
   if (!peripheral.connected()) {
     showTextLarge(1, 450, 1, "CPT Connection,Failure", false);
+    delay(5000);
+    ESP.restart();
     while (!CPTconnected) {
       blinkAsterisks();
     }
@@ -646,16 +782,57 @@ void SetupCPT() {
       blinkAsterisks();
     }
   }
+  // Serial.println("ble discoonect");
+  // BLE.disconnect();
+  // Serial.println("ble end");
+  // BLE.end();
+  // Serial.println("trying BLE.Begin again...");
+  // if (!BLE.begin()) {
+  //   showText(1, 450, 1, "BLE module failed!", false);
+  //   Serial.println("BLE module failed!");
+  //   while (!BLE_UI) {
+  //     blinkAsterisks();
+  //   }
+  // }
+  // else
+  // {
+  //   Serial.println("BLE.begin 2nd time worked");
+  // }
+
+
   BLE_UI = true;
   //showText(1,45,1,"BLE Ready", false);
   Serial.println("BLE Ready, calling BLE.setEventHandler");
   BLE.setEventHandler(BLEDiscovered, CPTdiscoveredHandler);
 }
 
+void SetupCPTMeatNet() {
+  IsSetupCPTMeatNet = true;
+
+  // BLE.setEventHandler(BLEDiscovered, NULL);
+  // BLE.disconnect();
+  // BLE.end();
+  // delay(200);
+
+
+  // begin initialization
+  if (!BLE.begin()) {
+    Serial.println("starting BLE failed!");
+    while (1)
+      ;
+  }
+  Serial.println("Starting BLE scan, setupCPTMeatNet...");
+  // start scanning for peripheral
+  BLE.scan(true);  //set to TRUE to allow duplicates, in our use case, we need to allow dupes
+  BLE_UI = true;
+  //showText(1,45,1,"BLE Ready", false);
+  Serial.println("BLE scan starting...");
+}
+
 void DisplayStartup() {
   ClearDisplay(1);
   DisplayFrame(BLUE);
-  for (int i = 0; i <= 5; i++) {
+  for (int i = 0; i <= 3; i++) {
     showTextLarge(200, 200, 1, "Starting up...", false);
     delay(250);
     showTextLarge(200, 200, 1, "Starting up...", true);
@@ -702,6 +879,14 @@ void TouchRead() {
         displayTemps();
       }
     }
+    else if (ti.x[0] < 150 and ti.y[0] < 150) //top right corner touched
+    {
+      if ((millis() - lastDebounceTime) > debounceDelay) { //debounceDelay
+        lastDebounceTime = millis();
+        Serial.println("!! REBOOT TO PROBE DETECT !!");
+        useProbe();
+      }
+    }
   }
 }
 
@@ -710,9 +895,34 @@ void resetLastConnectTime() {
     lastMeatNetConnectTime = millis(); //reset
 }
 
+void printHex(uint8_t num) {
+  char hexCar[2];
+
+  sprintf(hexCar, "%02X", num);
+  Serial.print(hexCar);
+}
+
+void disconnectBLE(){
+  Serial.println("!!! DISCONNECT BLE CALLED !!");
+  BLE.disconnect();
+  BLE.end();
+}
+
+void writeEeprom(int probeState){
+    EEPROM.write(0, probeState);
+    EEPROM.commit();
+}
+
+void useProbe(){
+    writeEeprom(0);
+    ESP.restart();
+}
+
+
 void setup() {
   Serial.begin(115200);
   Serial.println("start setup");
+  EEPROM.begin(EEPROM_SIZE);
   TouchInit();
   GFXinit();
   DisplayStartup();
@@ -720,23 +930,43 @@ void setup() {
 
 void loop() {
   Serial.println("start loop");
-  if (IsSetupCPT == false)
+
+//debug force meatnet scan
+//IsUseProbe = false;
+
+//read which probe from eeprom
+IsUseProbe = !(EEPROM.read(0)); //1 = use probe, 0 = use meatnet
+Serial.println("IsUseProbe = " + String(IsUseProbe)); 
+
+
+  if (IsUseProbe && IsSetupCPT == false)
     SetupCPT();
+  else if (!IsUseProbe && IsSetupCPTMeatNet == false)
+    SetupCPTMeatNet();
 
   if (IsUseProbe && (millis() - lastProbeConnectTime) > switchDeviceWait) { //debounceDelay
     Serial.println("!!! SWITCH DEVICE, LOOK FOR MeatNet!!!");
     CurrentScreenDisplayState = 1;
     resetLastConnectTime(); //reset last connect times
+    //disconnectBLE();
     //todo kick in logic to switch to meatnet
-    IsUseProbe = false;
+    //IsUseProbe = false;
+    IsSetupCPT = false;
+    writeEeprom(1);
+    ESP.restart();
     //todo add logic to disconnect the BLE services so we can engage the advert scan
   }
-  else if (!IsUseProbe && (millis() - lastMeatNetConnectTime) > switchDeviceWait) { //debounceDelay
+  else if (!IsUseProbe && (millis() - lastMeatNetConnectTime) > switchDeviceWaitMeatNet) { //debounceDelay
     Serial.println("!!! SWITCH DEVICE, LOOK FOR Probe!!!");
     CurrentScreenDisplayState = 1;
     resetLastConnectTime(); //reset last connect times
+
+    //disconnectBLE();
     //todo kick in logic to switch to meatnet
-    IsUseProbe = true;
+    //IsUseProbe = true;
+    IsSetupCPTMeatNet = false;
+    writeEeprom(0);
+    ESP.restart();
     //todo add logic to disconnect the BLE services so we can engage the advert scan
   }
 
@@ -756,9 +986,50 @@ void loop() {
   else
   {
     Serial.println("TODO start advert scan");
-    DisplayScanCPT("MeatNet");
-    delay(1000);
-  }
+    if (CurrentScreenDisplayState <= 2)
+      DisplayScanCPT("MeatNet");
+    BLEDevice peripheral = BLE.available();
 
-  delay(100);
+    if (peripheral && peripheral.address().startsWith("f1:12:1c:ca:a1:3b")) {  //cpt booster
+      Serial.println("Discovered a peripheral ");
+      Serial.println("-----------------------");
+      // print address
+      Serial.print("Address: ");
+      Serial.println(peripheral.address());
+      // print the local name, if present
+      if (peripheral.hasLocalName()) {
+        Serial.print("Local Name: ");
+        Serial.println(peripheral.localName());
+      }
+      if (peripheral.hasAdvertisementData()) {
+        Serial.print("ad data: ");
+        Serial.print("length:");
+        Serial.println(String(peripheral.advertisementDataLength()));
+        Serial.println("TODO need to get data");
+
+        // Serial.println("RSSI: ");
+        // Serial.println(peripheral.rssi());
+
+        int adLength = peripheral.advertisementData(meatNetData, 48);
+        Serial.println("Advertisement 0x16: 0x ad length =" + String(adLength));
+
+        for (int i = 0; i < sizeof(meatNetData); i++) {
+          printHex(meatNetData[i]);
+        }
+
+        readCPTvalueMeatNet();
+        while(1) //keep reading touch screen
+        {
+          if ((millis() - lastTouchTime) > touchWait) {
+            Serial.println("breaking out of touch screen loop");  
+            lastTouchTime = millis();
+            break;
+          }
+          TouchRead();
+        }
+      }
+    }
+    //delay(1000);
+  }
+  //delay(100);
 }
